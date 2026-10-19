@@ -1,0 +1,21 @@
+Copyright (C) 2026 CPE Monitor contributors.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 2 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+SPDX-License-Identifier: GPL-2.0-or-later
+
+This notice covers project-owned application code, build scripts and documentation.
+Third-party components and fonts retain their own licenses. The user-supplied
+CTM.ico remains outside this grant, as under the previous project license.
+See THIRD_PARTY_NOTICES.md and vendor/README.md for third-party terms.
+The combined program with the current Apache-2.0 dependencies is distributed
+under GPL version 3, as permitted by the version-2-or-later grant above.

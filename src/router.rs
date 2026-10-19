@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 CPE Monitor contributors.
 use crate::model::{Config, Snapshot, origin, protect};
 use anyhow::{Context, Result, bail};
 use hmac::{Hmac, KeyInit, Mac};

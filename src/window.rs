@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 CPE Monitor contributors.
 //! Native hit testing keeps dragging in the compositor. No rendering or disk I/O
 //! runs in the move/size message path; only the completed placement is queued.
 

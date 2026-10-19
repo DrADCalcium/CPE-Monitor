@@ -2,7 +2,7 @@
 name = "cpe-monitor"
 version = "0.4.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-2.0-or-later"
 
 [dependencies]
 anyhow = "1"

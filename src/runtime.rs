@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 CPE Monitor contributors.
 //! Event-driven Win32 GDI host. The rasterizer writes directly into a top-down
 //! DIB section; there is no GL context, GPU driver, browser or frame timer.
 use egui_software_backend::{BufferMutRef, ColorFieldOrder, EguiSoftwareRender};

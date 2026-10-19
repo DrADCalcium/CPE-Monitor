@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 CPE Monitor contributors.
 fn main() {
     winresource::WindowsResource::new()
         .set_icon("CTM.ico")

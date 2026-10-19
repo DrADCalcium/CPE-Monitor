@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 CPE Monitor contributors.
 //! Private, executable-relative data with current-user/SYSTEM ACLs and atomic writes.
 use anyhow::{Context, Result, bail};
 use std::{fs, io::Write, os::windows::fs::MetadataExt, path::Path, sync::OnceLock};

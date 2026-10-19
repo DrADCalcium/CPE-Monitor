@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 CPE Monitor contributors.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod runtime;
 mod storage;
