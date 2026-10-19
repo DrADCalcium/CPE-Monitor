@@ -51,6 +51,7 @@ struct App {
     adapter_list: Vec<(String, Vec<String>)>,
     capture: Option<String>,
     capture_at: Instant,
+    capture_delay: Duration,
     capture_sent: bool,
     quitting: bool,
     native: Option<window::Controller>,
@@ -82,7 +83,7 @@ impl App {
                 }
             }
         }
-        let native = window::Controller::install(cc, window::load(), config.ui_scale);
+        let native = window::Controller::install(cc, window::load(), config.ui_scale, !settings);
         apply_appearance(&cc.egui_ctx, &config);
         if settings || native.is_none() {
             cc.egui_ctx
@@ -205,6 +206,17 @@ impl App {
             adapter_list: model::adapters(),
             capture,
             capture_at: Instant::now(),
+            // Longer offline captures allow interaction checks alongside a live
+            // instance without starting another router worker or tray icon.
+            capture_delay: Duration::from_secs(
+                std::env::args()
+                    .find_map(|arg| {
+                        arg.strip_prefix("--capture-delay=")
+                            .and_then(|s| s.parse::<u64>().ok())
+                    })
+                    .unwrap_or(3)
+                    .clamp(3, 120),
+            ),
             capture_sent: false,
             quitting: false,
             native,
@@ -367,7 +379,7 @@ impl App {
             self.widget(ui, &ctx);
         }
         if let Some(path) = &self.capture {
-            if !self.capture_sent && self.capture_at.elapsed() > Duration::from_secs(3) {
+            if !self.capture_sent && self.capture_at.elapsed() > self.capture_delay {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
                 self.capture_sent = true;
             }
@@ -461,6 +473,7 @@ fn main() -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("CPE 流量监控")
         .with_decorations(false)
+        .with_taskbar(settings)
         .with_transparent(false)
         .with_inner_size(if settings { SETTINGS_SIZE } else { WIDGET_SIZE })
         .with_resizable(!settings)

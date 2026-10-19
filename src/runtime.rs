@@ -6,7 +6,7 @@ use egui_software_backend::{BufferMutRef, ColorFieldOrder, EguiSoftwareRender};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{sync::Arc, time::Instant};
 use windows_sys::Win32::{Foundation::HWND, Graphics::Gdi::*};
-use winit::platform::windows::WindowExtWindows;
+use winit::platform::windows::{WindowAttributesExtWindows, WindowExtWindows};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -125,6 +125,7 @@ struct Host {
     closing: bool,
     region: Option<(bool, u32, u32)>,
     dark_theme: Option<bool>,
+    taskbar_settings: Option<bool>,
     error: Option<String>,
 }
 fn hwnd(window: &Window) -> HWND {
@@ -217,6 +218,9 @@ impl Host {
                 self.visible = *v;
             }
         }
+        if let Some(native) = &app.native {
+            native.prepare_widget_mode(!app.settings);
+        }
         let mut requested = Vec::new();
         egui_winit::process_viewport_commands(
             &self.ctx,
@@ -225,6 +229,10 @@ impl Host {
             window,
             &mut requested,
         );
+        if self.taskbar_settings != Some(app.settings) {
+            window.set_skip_taskbar(!app.settings);
+            self.taskbar_settings = Some(app.settings);
+        }
         // The Windows shadow workaround reserves an unpainted one-pixel strip
         // above the client area. Our rounded region supplies the card outline.
         window.set_undecorated_shadow(false);
@@ -329,7 +337,13 @@ impl ApplicationHandler<Instant> for Host {
         if self.window.is_some() {
             return;
         }
-        let window = match egui_winit::create_window(&self.ctx, el, &self.builder) {
+        // Build hidden and without winit's undecorated shadow workaround.
+        // The first frame and native widget styles are installed before showing.
+        let hidden = self.builder.clone().with_visible(false);
+        let attributes = egui_winit::create_winit_window_attributes(&self.ctx, hidden.clone())
+            .with_undecorated_shadow(false)
+            .with_skip_taskbar(!self.settings);
+        let window = match el.create_window(attributes) {
             Ok(w) => w,
             Err(e) => {
                 self.error = Some(e.to_string());
@@ -337,6 +351,7 @@ impl ApplicationHandler<Instant> for Host {
                 return;
             }
         };
+        egui_winit::apply_viewport_builder_to_window(&self.ctx, &window, &hidden);
         self.state = Some(egui_winit::State::new(
             self.ctx.clone(),
             egui::ViewportId::ROOT,
@@ -355,6 +370,12 @@ impl ApplicationHandler<Instant> for Host {
             self.settings,
         ));
         self.window = Some(window);
+        self.frame(el);
+        if self.error.is_none() {
+            if let Some(window) = &self.window {
+                window.set_visible(true);
+            }
+        }
         self.dirty = true;
     }
     fn user_event(&mut self, _: &ActiveEventLoop, when: Instant) {
@@ -441,6 +462,7 @@ pub fn run(
         closing: false,
         region: None,
         dark_theme: None,
+        taskbar_settings: None,
         error: None,
     };
     el.run_app(&mut host)?;

@@ -146,6 +146,7 @@ impl Controller {
         cc: &crate::runtime::CreationContext<'_>,
         saved: Option<Placement>,
         scale: f32,
+        widget: bool,
     ) -> Option<Self> {
         let RawWindowHandle::Win32(handle) = cc.window.window_handle().ok()?.as_raw() else {
             return None;
@@ -159,7 +160,7 @@ impl Controller {
                 ..current
             });
             let shared = Arc::new(Shared {
-                enabled: AtomicBool::new(false),
+                enabled: AtomicBool::new(widget),
                 moving: AtomicBool::new(false),
                 ctx: cc.egui_ctx.clone(),
                 placement: Mutex::new(p),
@@ -171,10 +172,38 @@ impl Controller {
                 drop(Box::from_raw(ptr));
                 return None;
             }
-            Some(Self {
+            let controller = Self {
                 hwnd: hwnd as isize,
                 shared,
-            })
+            };
+            if widget {
+                controller.apply_widget_frame();
+            }
+            Some(controller)
+        }
+    }
+    pub fn prepare_widget_mode(&self, widget: bool) {
+        let previous = self.shared.enabled.swap(widget, Ordering::Relaxed);
+        if widget && !previous {
+            self.apply_widget_frame();
+        }
+    }
+    fn apply_widget_frame(&self) {
+        unsafe {
+            let hwnd = self.hwnd as HWND;
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            SetWindowLongPtrW(hwnd, GWL_STYLE, widget_style(style) as isize);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, widget_extended_style(ex) as isize);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
     }
     pub fn scale(&self) -> f32 {
@@ -184,8 +213,8 @@ impl Controller {
         if settings {
             self.shared.enabled.store(false, Ordering::Relaxed);
         } else {
+            self.prepare_widget_mode(true);
             self.restore();
-            self.shared.enabled.store(true, Ordering::Relaxed);
         }
     }
     pub fn restore(&self) {
@@ -230,6 +259,15 @@ impl Controller {
         }
     }
 }
+// Winit keeps these flags even for an undecorated window. Removing them
+// prevents DefWindowProc from drawing legacy caption buttons during a drag.
+fn widget_style(style: u32) -> u32 {
+    style & !(WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+}
+fn widget_extended_style(style: u32) -> u32 {
+    (style & !(WS_EX_APPWINDOW | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME))
+        | WS_EX_TOOLWINDOW
+}
 unsafe extern "system" fn subclass(
     hwnd: HWND,
     msg: u32,
@@ -255,6 +293,22 @@ unsafe extern "system" fn subclass(
             return DefSubclassProc(hwnd, msg, wp, lp);
         }
         match msg {
+            WM_STYLECHANGING => {
+                let styles = &mut *(lp as *mut STYLESTRUCT);
+                if wp as i32 == GWL_STYLE {
+                    styles.styleNew = widget_style(styles.styleNew);
+                } else if wp as i32 == GWL_EXSTYLE {
+                    styles.styleNew = widget_extended_style(styles.styleNew);
+                }
+                return 0;
+            }
+            WM_NCCALCSIZE | WM_NCPAINT => return 0,
+            WM_NCACTIVATE => {
+                // Keep winit's focus bookkeeping, but ask DefWindowProc not to
+                // repaint the non-client area (documented lParam=-1 behavior).
+                return DefSubclassProc(hwnd, msg, wp, -1);
+            }
+            WM_NCRBUTTONUP if wp == HTCAPTION as usize => return 0,
             WM_NCLBUTTONDOWN if wp == HTCAPTION as usize => {
                 // Capture the original button-down coordinates, before the
                 // system modal loop and winit's queued mouse-move workaround.
@@ -382,6 +436,97 @@ unsafe extern "system" fn subclass(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_widget_frame_survives_style_rewrites_and_settings() {
+        unsafe {
+            let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+            let hwnd = CreateWindowExW(
+                WS_EX_APPWINDOW | WS_EX_WINDOWEDGE,
+                class.as_ptr(),
+                class.as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                340,
+                232,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            );
+            assert!(!hwnd.is_null(), "hidden test window creation failed");
+            struct Owned(HWND);
+            impl Drop for Owned {
+                fn drop(&mut self) {
+                    unsafe {
+                        DestroyWindow(self.0);
+                    }
+                }
+            }
+            let _owned = Owned(hwnd);
+            let (writer, _rx) = mpsc::channel();
+            let shared = Arc::new(Shared {
+                enabled: AtomicBool::new(false),
+                moving: AtomicBool::new(false),
+                ctx: egui::Context::default(),
+                placement: Mutex::new(geometry(hwnd)),
+                move_origin: Mutex::new(None),
+                writer,
+            });
+            let ptr = Box::into_raw(Box::new(shared.clone()));
+            assert_ne!(SetWindowSubclass(hwnd, Some(subclass), ID, ptr as usize), 0);
+            let controller = Controller {
+                hwnd: hwnd as isize,
+                shared,
+            };
+            for _ in 0..3 {
+                controller.prepare_widget_mode(false);
+                SetWindowLongPtrW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW as isize);
+                SetWindowLongPtrW(
+                    hwnd,
+                    GWL_EXSTYLE,
+                    (WS_EX_APPWINDOW | WS_EX_WINDOWEDGE) as isize,
+                );
+                assert_ne!(
+                    GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_CAPTION,
+                    0,
+                    "settings keep native caption"
+                );
+                controller.prepare_widget_mode(true);
+                // Winit may rewrite all flags when visibility, theme or size changes.
+                SetWindowLongPtrW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW as isize);
+                SetWindowLongPtrW(
+                    hwnd,
+                    GWL_EXSTYLE,
+                    (WS_EX_APPWINDOW | WS_EX_WINDOWEDGE) as isize,
+                );
+                let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+                assert_eq!(
+                    style & (WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX),
+                    0
+                );
+                assert_ne!(
+                    style & WS_THICKFRAME,
+                    0,
+                    "native edge resizing remains available"
+                );
+                // Windows may restore WS_EX_WINDOWEDGE while WS_THICKFRAME is set.
+                // Suppressed NC painting keeps that resize-related flag invisible.
+                assert_eq!(ex & (WS_EX_APPWINDOW | WS_EX_CLIENTEDGE), 0);
+                assert_ne!(
+                    ex & WS_EX_TOOLWINDOW,
+                    0,
+                    "widget excluded from taskbar and Alt+Tab"
+                );
+                assert_eq!(SendMessageW(hwnd, WM_NCPAINT, 1, 0), 0);
+                SendMessageW(hwnd, WM_NCACTIVATE, 1, 0);
+                SendMessageW(hwnd, WM_NCACTIVATE, 0, 0);
+                assert_eq!(GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_CAPTION, 0);
+            }
+        }
+    }
+
     #[test]
     fn slow_drag_can_escape_snapped_edge() {
         let original = RECT {

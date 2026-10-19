@@ -15,7 +15,6 @@ pub const WIDGET_SIZE: Vec2 = Vec2::new(340., 232.);
 pub const SETTINGS_SIZE: Vec2 = Vec2::new(420., 660.);
 const ACCENT: Color32 = Color32::from_rgb(0, 95, 184);
 const ACCENT_DARK: Color32 = Color32::from_rgb(96, 205, 255);
-const LIGHT_USAGE: Color32 = Color32::from_rgb(0x95, 0xEC, 0x69);
 const SEMIBOLD: &str = "ui-semibold";
 
 struct FontCatalog {
@@ -271,7 +270,7 @@ impl Palette {
                 secondary: Color32::from_rgb(97, 97, 97),
                 border: Color32::from_rgb(218, 218, 218),
                 accent: ACCENT,
-                green: Color32::from_rgb(36, 177, 127),
+                green: Color32::from_rgb(88, 215, 168),
                 track: Color32::from_rgb(231, 231, 231),
             }
         }
@@ -534,11 +533,7 @@ impl App {
                     "剩余流量",
                     12.,
                     false,
-                    if ui.visuals().dark_mode {
-                        p.secondary
-                    } else {
-                        LIGHT_USAGE
-                    },
+                    p.secondary,
                 );
                 let remaining = self
                     .snapshot
@@ -575,11 +570,7 @@ impl App {
                             Vec2::new(track.width() * ratio, track.height()),
                         ),
                         4,
-                        if ui.visuals().dark_mode {
-                            color
-                        } else {
-                            LIGHT_USAGE
-                        },
+                        color,
                     );
                 }
                 text(
