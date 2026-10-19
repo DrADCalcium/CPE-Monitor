@@ -1,0 +1,10 @@
+/target/
+/.build/
+/data/
+*.exe
+*.pdb
+*.zip
+*.log
+.env
+.env.*
+config.json

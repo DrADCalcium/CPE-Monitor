@@ -1,0 +1,17 @@
+{
+  "router": "",
+  "password": "",
+  "theme": "system",
+  "interval": 10,
+  "adapter": "",
+  "ip": "",
+  "font": "MiSans",
+  "font_weight": 400,
+  "heading_weight": 600,
+  "ui_scale": 1.0,
+  "autostart": false,
+  "topmost": false,
+  "quota_gb": null,
+  "reset_day": null,
+  "position": null
+}
