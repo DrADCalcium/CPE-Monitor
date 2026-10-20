@@ -101,6 +101,16 @@ cargo test --locked
 
 也可直接运行 `cargo build --release --locked`，产物位于 `target/release/cpe-monitor.exe`；此方式不自动应用构建脚本中的路径重映射。
 
+### 精简便携包
+
+构建后可用 Python 3.10 或更新版本打包（仅打包时需要，运行程序不需要 Python）：
+
+```powershell
+python tools/package_release.py --exe CPE-Monitor.exe --output dist/CPE-Monitor-Windows-x64.zip
+```
+
+便携包仅包含 EXE 和分发所需的许可通知。重复的第三方许可正文会合并并保留组件对应关系，不附带独立图标、配置模板、开发文档或构建组件；`data/` 由程序首次运行时创建。源码仓库仍保留完整构建资料和原始许可证。
+
 ### 源码结构
 
 ```text
