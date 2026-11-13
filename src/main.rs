@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod runtime;
 mod storage;
+mod taskbar;
 use zeroize::{Zeroize, Zeroizing};
 mod fluent;
 mod model;
@@ -13,11 +14,7 @@ mod worker;
 use fluent::{SETTINGS_SIZE, WIDGET_SIZE, apply_appearance};
 use model::{Config, Snapshot};
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
     time::{Duration, Instant},
 };
 use tray_icon::{
@@ -27,6 +24,7 @@ use tray_icon::{
 
 enum TrayAction {
     Toggle,
+    Show,
     Autostart,
     Exit,
 }
@@ -47,7 +45,7 @@ struct App {
     tray_rx: mpsc::Receiver<TrayAction>,
     toggle: Option<MenuItem>,
     startup: Option<CheckMenuItem>,
-    visible: Arc<AtomicBool>,
+    visible: bool,
     adapter_list: Vec<(String, Vec<String>)>,
     capture: Option<String>,
     capture_at: Instant,
@@ -97,14 +95,13 @@ impl App {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok());
         let (tx, rx) = if capture.is_none() {
-            worker::start(config.clone(), cc.egui_ctx.clone())
+            worker::start(config.clone(), cc.wake.clone())
         } else {
             let (tx, _) = mpsc::channel();
             let (_, rx) = mpsc::channel();
             (tx, rx)
         };
         let (tray_tx, tray_rx) = mpsc::channel();
-        let visible = Arc::new(AtomicBool::new(true));
         let mut tray = None;
         let mut toggle = None;
         let mut startup = None;
@@ -143,7 +140,7 @@ impl App {
                 auto.id().clone(),
                 quit.id().clone(),
             );
-            let ctx = cc.egui_ctx.clone();
+            let wake = cc.wake.clone();
             let sender = tx.clone();
             let events = tray_tx.clone();
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
@@ -156,11 +153,10 @@ impl App {
                 } else if e.id == quit_id {
                     let _ = events.send(TrayAction::Exit);
                 }
-                ctx.request_repaint();
+                wake.now();
             }));
-            let ctx = cc.egui_ctx.clone();
+            let wake = cc.wake.clone();
             let events = tray_tx;
-            let v = visible.clone();
             tray_icon::TrayIconEvent::set_event_handler(Some(move |e| {
                 if matches!(
                     e,
@@ -169,12 +165,8 @@ impl App {
                         ..
                     }
                 ) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    if !v.load(Ordering::Relaxed) {
-                        let _ = events.send(TrayAction::Toggle);
-                    }
-                    ctx.request_repaint();
+                    let _ = events.send(TrayAction::Show);
+                    wake.now();
                 }
             }));
             toggle = Some(hide);
@@ -202,8 +194,8 @@ impl App {
             tray_rx,
             toggle,
             startup,
-            visible,
-            adapter_list: model::adapters(),
+            visible: true,
+            adapter_list: Vec::new(),
             capture,
             capture_at: Instant::now(),
             // Longer offline captures allow interaction checks alongside a live
@@ -229,7 +221,7 @@ impl App {
         app
     }
     fn set_visible(&mut self, ctx: &egui::Context, show: bool) {
-        self.visible.store(show, Ordering::Relaxed);
+        self.visible = show;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(show));
         if show {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -268,12 +260,22 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title("CPE 流量监控".into()));
     }
     fn save(&mut self, ctx: &egui::Context) {
-        let result = (|| -> anyhow::Result<()> {
+        let result = (|| -> anyhow::Result<bool> {
             self.draft.interval = self
                 .interval_text
                 .trim()
                 .parse()
                 .map_err(|_| anyhow::anyhow!("刷新间隔请输入 1–1440 的整数"))?;
+            // Moving the overlay should also work offline, without touching
+            // startup settings or restarting an authenticated router session.
+            if self.config.taskbar != self.draft.taskbar && self.password.is_empty() {
+                let mut updated = self.config.clone();
+                updated.taskbar = self.draft.taskbar.clone();
+                if updated == self.draft {
+                    model::save_config(&updated)?;
+                    return Ok(false);
+                }
+            }
             model::validate(&self.draft)?;
             if !self.password.is_empty() {
                 self.draft.password = model::protect(&self.password, false)?;
@@ -287,18 +289,20 @@ impl App {
                 let _ = model::autostart(previous);
                 return Err(e);
             }
-            Ok(())
+            Ok(true)
         })();
         match result {
-            Ok(()) => {
+            Ok(reconfigure_router) => {
                 self.config = self.draft.clone();
 
                 if let Some(a) = &self.startup {
                     a.set_checked(self.config.autostart);
                 }
-                let _ = self
-                    .tx
-                    .send(worker::Command::Configure(self.config.clone()));
+                if reconfigure_router {
+                    let _ = self
+                        .tx
+                        .send(worker::Command::Configure(self.config.clone()));
+                }
                 self.close_settings(ctx);
             }
             Err(e) => self.error = format!("{e:#}"),
@@ -326,9 +330,9 @@ impl App {
         while let Ok(e) = self.tray_rx.try_recv() {
             match e {
                 TrayAction::Toggle => {
-                    let show = !self.visible.load(Ordering::Relaxed);
-                    self.set_visible(&ctx, show);
+                    self.set_visible(&ctx, !self.visible);
                 }
+                TrayAction::Show => self.set_visible(&ctx, true),
                 TrayAction::Exit => {
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);

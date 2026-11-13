@@ -7,7 +7,25 @@ use serde::{Deserialize, Serialize};
 use std::{net::Ipv4Addr, path::PathBuf};
 use zeroize::{Zeroize, Zeroizing};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskbarSide {
+    #[default]
+    Right,
+    Left,
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskbarConfig {
+    pub enabled: bool,
+    pub side: TaskbarSide,
+    pub offset: i32,
+    /// Leave empty to use the main window's selected font.
+    pub font: String,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub router: String,
@@ -22,6 +40,7 @@ pub struct Config {
     pub ui_scale: f32,
     pub autostart: bool,
     pub topmost: bool,
+    pub taskbar: TaskbarConfig,
     pub quota_gb: Option<f64>,
     pub reset_day: Option<u32>,
     pub position: Option<[f32; 2]>,
@@ -41,6 +60,7 @@ impl Default for Config {
             ui_scale: 1.0,
             autostart: false,
             topmost: false,
+            taskbar: TaskbarConfig::default(),
             quota_gb: None,
             reset_day: None,
             position: None,

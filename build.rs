@@ -3,6 +3,7 @@
 fn main() {
     winresource::WindowsResource::new()
         .set_icon("CTM.ico")
+        .set_manifest(include_str!("app.manifest"))
         .set("ProductName", "CPE 流量监控")
         .set("FileDescription", "CPE 流量监控")
         .compile()

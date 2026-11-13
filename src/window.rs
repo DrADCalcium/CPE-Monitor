@@ -40,7 +40,7 @@ pub fn load() -> Option<Placement> {
 struct Shared {
     enabled: AtomicBool,
     moving: AtomicBool,
-    ctx: egui::Context,
+    wake: crate::runtime::Wake,
     placement: Mutex<Placement>,
     move_origin: Mutex<Option<(POINT, RECT)>>,
     writer: mpsc::Sender<Placement>,
@@ -162,7 +162,7 @@ impl Controller {
             let shared = Arc::new(Shared {
                 enabled: AtomicBool::new(widget),
                 moving: AtomicBool::new(false),
-                ctx: cc.egui_ctx.clone(),
+                wake: cc.wake.clone(),
                 placement: Mutex::new(p),
                 move_origin: Mutex::new(None),
                 writer: writer(),
@@ -412,7 +412,7 @@ unsafe extern "system" fn subclass(
                 let p = geometry(hwnd);
                 *shared.placement.lock().unwrap() = p;
                 let _ = shared.writer.send(p);
-                shared.ctx.request_repaint();
+                shared.wake.now();
             }
             WM_GETMINMAXINFO => {
                 let m = &mut *(lp as *mut MINMAXINFO);
@@ -468,7 +468,7 @@ mod tests {
             let shared = Arc::new(Shared {
                 enabled: AtomicBool::new(false),
                 moving: AtomicBool::new(false),
-                ctx: egui::Context::default(),
+                wake: crate::runtime::Wake(Arc::new(|_| {})),
                 placement: Mutex::new(geometry(hwnd)),
                 move_origin: Mutex::new(None),
                 writer,

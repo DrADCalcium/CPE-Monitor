@@ -115,76 +115,72 @@ pub fn apply_appearance(ctx: &egui::Context, c: &Config) {
         _ => egui::ThemePreference::System,
     });
     ctx.set_zoom_factor(1.);
-    static CACHE: std::sync::Mutex<Option<((String, u16, u16), egui::FontDefinitions)>> =
-        std::sync::Mutex::new(None);
+    let font_key_id = egui::Id::new("installed-font-selection");
     let key = (c.font.clone(), c.font_weight, c.heading_weight);
-    let fonts = {
-        let mut cache = CACHE.lock().unwrap();
-        if let Some((_, fonts)) = cache.as_ref().filter(|(k, _)| k == &key) {
-            fonts.clone()
-        } else {
-            let mut fonts = egui::FontDefinitions::default();
-            let mut regular = Vec::new();
-            let mut bold = Vec::new();
-            // Keep the user's family first, with a CJK fallback and an actual semibold face.
-            let has_cjk = face(&c.font, false)
-                .and_then(|id| {
-                    catalog().db.with_face_data(id, |data, index| {
-                        ttf_parser::Face::parse(data, index)
-                            .ok()
-                            .is_some_and(|f| f.glyph_index('中').is_some())
-                    })
+    if ctx
+        .data(|d| d.get_temp::<(String, u16, u16)>(font_key_id))
+        .as_ref()
+        != Some(&key)
+    {
+        let mut fonts = egui::FontDefinitions::default();
+        let mut regular = Vec::new();
+        let mut bold = Vec::new();
+        // Keep the user's family first, with a CJK fallback and an actual semibold face.
+        let has_cjk = face(&c.font, false)
+            .and_then(|id| {
+                catalog().db.with_face_data(id, |data, index| {
+                    ttf_parser::Face::parse(data, index)
+                        .ok()
+                        .is_some_and(|f| f.glyph_index('中').is_some())
                 })
-                .unwrap_or(false);
-            let candidates = if has_cjk {
-                vec![c.font.as_str()]
-            } else {
-                vec![c.font.as_str(), "Microsoft YaHei UI"]
-            };
-            for (slot, name) in candidates.iter().enumerate() {
-                for (heavy, list) in [(false, &mut regular), (true, &mut bold)] {
-                    let requested = if heavy {
-                        c.heading_weight
-                    } else {
-                        c.font_weight
-                    };
-                    if let Some(id) = face_weight(name, requested) {
-                        let key = format!("face-{slot}-{heavy}");
-                        if let Some(data) = catalog().db.with_face_data(id, |bytes, index| {
-                            let mut data = egui::FontData::from_owned(bytes.to_vec());
-                            data.index = index;
-                            if let Some(axis) =
-                                data.variation_axes().iter().find(|a| a.tag == *b"wght")
-                            {
-                                data.tweak.coords.push(
-                                    b"wght",
-                                    (requested as f32).clamp(axis.range.min, axis.range.max),
-                                );
-                            }
-                            data
-                        }) {
-                            fonts.font_data.insert(key.clone(), data.into());
-                            list.push(key);
+            })
+            .unwrap_or(false);
+        let candidates = if has_cjk {
+            vec![c.font.as_str()]
+        } else {
+            vec![c.font.as_str(), "Microsoft YaHei UI"]
+        };
+        for (slot, name) in candidates.iter().enumerate() {
+            for (heavy, list) in [(false, &mut regular), (true, &mut bold)] {
+                let requested = if heavy {
+                    c.heading_weight
+                } else {
+                    c.font_weight
+                };
+                if let Some(id) = face_weight(name, requested) {
+                    let key = format!("face-{slot}-{heavy}");
+                    if let Some(data) = catalog().db.with_face_data(id, |bytes, index| {
+                        let mut data = egui::FontData::from_owned(bytes.to_vec());
+                        data.index = index;
+                        if let Some(axis) = data.variation_axes().iter().find(|a| a.tag == *b"wght")
+                        {
+                            data.tweak.coords.push(
+                                b"wght",
+                                (requested as f32).clamp(axis.range.min, axis.range.max),
+                            );
                         }
+                        data
+                    }) {
+                        fonts.font_data.insert(key.clone(), data.into());
+                        list.push(key);
                     }
                 }
             }
-            let defaults = fonts
-                .families
-                .get(&FontFamily::Proportional)
-                .cloned()
-                .unwrap_or_default();
-            regular.extend(defaults.clone());
-            bold.extend(regular.clone());
-            fonts.families.insert(FontFamily::Proportional, regular);
-            fonts
-                .families
-                .insert(FontFamily::Name(SEMIBOLD.into()), bold);
-            *cache = Some((key, fonts.clone()));
-            fonts
         }
-    };
-    ctx.set_fonts(fonts);
+        let defaults = fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default();
+        regular.extend(defaults.clone());
+        bold.extend(regular.clone());
+        fonts.families.insert(FontFamily::Proportional, regular);
+        fonts
+            .families
+            .insert(FontFamily::Name(SEMIBOLD.into()), bold);
+        ctx.set_fonts(fonts);
+        ctx.data_mut(|d| d.insert_temp(font_key_id, key));
+    }
     ctx.all_styles_mut(|s| {
         s.text_styles
             .insert(egui::TextStyle::Body, FontId::proportional(14.));
@@ -801,6 +797,42 @@ impl App {
                             radio(ui, &mut self.draft.theme, value, title, p);
                         }
                     });
+                    use model::TaskbarSide;
+                    switch(
+                        ui,
+                        "在任务栏显示剩余流量",
+                        &mut self.draft.taskbar.enabled,
+                        p,
+                    );
+                    if self.draft.taskbar.enabled {
+                        label(ui, "任务栏位置", p);
+                        ui.horizontal(|ui| {
+                            let side = &mut self.draft.taskbar.side;
+                            ui.radio_value(side, TaskbarSide::Right, "通知区域旁");
+                            ui.radio_value(side, TaskbarSide::Left, "任务栏左侧");
+                        });
+                        label(ui, "水平偏移（正数向右，负数向左）", p);
+                        ui.add(
+                            egui::DragValue::new(&mut self.draft.taskbar.offset)
+                                .range(-8192..=8192)
+                                .suffix(" DIP"),
+                        );
+                        label(ui, "任务栏字体", p);
+                        egui::ComboBox::from_id_salt("taskbar-font")
+                            .width(ui.available_width())
+                            .selected_text(if self.draft.taskbar.font.is_empty() {
+                                "跟随界面字体"
+                            } else {
+                                &self.draft.taskbar.font
+                            })
+                            .show_ui(ui, |ui| {
+                                let font = &mut self.draft.taskbar.font;
+                                ui.selectable_value(font, String::new(), "跟随界面字体");
+                                for name in &catalog().names {
+                                    ui.selectable_value(font, name.clone(), name);
+                                }
+                            });
+                    }
                     label(ui, "自动刷新间隔（分钟，1–1440）", p);
                     ui.horizontal(|ui| {
                         let width = ui.available_width() - 80.;

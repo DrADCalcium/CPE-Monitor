@@ -14,12 +14,30 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[derive(Clone)]
+pub struct Wake(pub(crate) Arc<dyn Fn(Instant) + Send + Sync>);
+impl Wake {
+    pub fn now(&self) {
+        (self.0)(Instant::now());
+    }
+    fn context(&self) -> egui::Context {
+        let ctx = egui::Context::default();
+        let schedule = self.0.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            if let Some(when) = Instant::now().checked_add(info.delay) {
+                schedule(when);
+            }
+        });
+        ctx
+    }
+}
 pub struct CreationContext<'a> {
     pub egui_ctx: egui::Context,
     pub window: &'a Window,
+    pub wake: &'a Wake,
 }
-struct Surface {
-    dc: HDC,
+pub(crate) struct Surface {
+    pub(crate) dc: HDC,
     bitmap: HBITMAP,
     previous: HGDIOBJ,
     bits: *mut [u8; 4],
@@ -27,7 +45,7 @@ struct Surface {
     height: usize,
 }
 impl Surface {
-    fn new(hwnd: HWND, width: usize, height: usize) -> anyhow::Result<Self> {
+    pub(crate) fn new(hwnd: HWND, width: usize, height: usize) -> anyhow::Result<Self> {
         anyhow::ensure!(
             width > 0 && height > 0 && width <= 16384 && height <= 16384,
             "窗口尺寸无效"
@@ -77,7 +95,7 @@ impl Surface {
             })
         }
     }
-    fn pixels(&mut self) -> &mut [[u8; 4]] {
+    pub(crate) fn pixels(&mut self) -> &mut [[u8; 4]] {
         unsafe { std::slice::from_raw_parts_mut(self.bits, self.width * self.height) }
     }
     fn present(&self, hwnd: HWND) {
@@ -108,6 +126,9 @@ impl Drop for Surface {
     }
 }
 struct Host {
+    wake: Wake,
+    overlay: crate::taskbar::Taskbar,
+    overlay_due: Option<Instant>,
     ctx: egui::Context,
     window: Option<Window>,
     state: Option<egui_winit::State>,
@@ -139,6 +160,7 @@ impl Host {
         let Some(window) = self.window.as_ref() else {
             return;
         };
+        let was_visible = self.visible;
         let state = self.state.as_mut().unwrap();
         egui_winit::update_viewport_info(&mut self.info, &self.ctx, window, false);
         if self.closing {
@@ -322,10 +344,27 @@ impl Host {
                 }
             }
         }
-        if !self.visible {
+        if was_visible && !self.visible {
+            // Background producers only hold Wake, so replacing the context releases
+            // the CJK fonts, glyph atlas, layout caches and software textures together.
             self.surface = None;
+            self.renderer = new_renderer();
+            self.ctx = self.wake.context();
+            self.state = Some(new_state(&self.ctx, window));
+            self.dark_theme = None;
+            self.deadline = None;
+        } else if !was_visible && self.visible {
+            crate::fluent::apply_appearance(
+                &self.ctx,
+                if app.settings {
+                    &app.draft
+                } else {
+                    &app.config
+                },
+            );
+            self.dirty = true;
         }
-        if actions {
+        if actions && self.visible {
             if let Some(d) = Instant::now().checked_add(delay) {
                 self.deadline = Some(self.deadline.map_or(d, |v| v.min(d)));
             }
@@ -352,19 +391,13 @@ impl ApplicationHandler<Instant> for Host {
             }
         };
         egui_winit::apply_viewport_builder_to_window(&self.ctx, &window, &hidden);
-        self.state = Some(egui_winit::State::new(
-            self.ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            window.theme(),
-            Some(2048),
-        ));
+        self.state = Some(new_state(&self.ctx, &window));
         egui_winit::update_viewport_info(&mut self.info, &self.ctx, &window, true);
         self.app = Some(crate::App::new(
             &CreationContext {
                 egui_ctx: self.ctx.clone(),
                 window: &window,
+                wake: &self.wake,
             },
             self.capture.take(),
             self.settings,
@@ -425,11 +458,45 @@ impl ApplicationHandler<Instant> for Host {
                 }
             }
         }
+        // Shell layout and appearance can change while no egui window is visible.
+        // Keep this timer independent of egui's repaint deadline.
+        if let Some(app) = &self.app {
+            let config = if app.settings {
+                &app.draft
+            } else {
+                &app.config
+            };
+            if config.taskbar.enabled && app.capture.is_none() {
+                if self.overlay_due.is_none_or(|t| t <= now) {
+                    self.overlay.sync(config, app.snapshot.as_ref());
+                    self.overlay_due = Some(now + std::time::Duration::from_secs(1));
+                }
+            } else {
+                self.overlay.close();
+                self.overlay_due = None;
+            }
+        }
         el.set_control_flow(
             self.deadline
+                .into_iter()
+                .chain(self.overlay_due)
+                .min()
                 .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
         );
     }
+}
+fn new_renderer() -> EguiSoftwareRender {
+    EguiSoftwareRender::new(ColorFieldOrder::Bgra).with_caching(false)
+}
+fn new_state(ctx: &egui::Context, window: &Window) -> egui_winit::State {
+    egui_winit::State::new(
+        ctx.clone(),
+        egui::ViewportId::ROOT,
+        window,
+        Some(window.scale_factor() as f32),
+        window.theme(),
+        Some(2048),
+    )
 }
 pub fn run(
     builder: egui::ViewportBuilder,
@@ -437,19 +504,20 @@ pub fn run(
     settings: bool,
 ) -> anyhow::Result<()> {
     let el = EventLoop::<Instant>::with_user_event().build()?;
-    let ctx = egui::Context::default();
     let proxy = el.create_proxy();
-    ctx.set_request_repaint_callback(move |info| {
-        if let Some(t) = Instant::now().checked_add(info.delay) {
-            let _ = proxy.send_event(t);
-        }
-    });
+    let wake = Wake(Arc::new(move |when| {
+        let _ = proxy.send_event(when);
+    }));
+    let ctx = wake.context();
     let mut host = Host {
         ctx,
+        wake,
+        overlay: Default::default(),
+        overlay_due: None,
         window: None,
         state: None,
         app: None,
-        renderer: EguiSoftwareRender::new(ColorFieldOrder::Bgra).with_caching(false),
+        renderer: new_renderer(),
         surface: None,
         builder,
         info: Default::default(),

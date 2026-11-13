@@ -17,7 +17,7 @@ pub struct Update {
     pub status: String,
     pub online: bool,
 }
-pub fn start(mut c: Config, ctx: egui::Context) -> (Sender<Command>, Receiver<Update>) {
+pub fn start(mut c: Config, wake: crate::runtime::Wake) -> (Sender<Command>, Receiver<Update>) {
     let (tx, rx) = mpsc::channel();
     let (out, input) = mpsc::channel();
     std::thread::spawn(move || {
@@ -49,7 +49,7 @@ pub fn start(mut c: Config, ctx: egui::Context) -> (Sender<Command>, Receiver<Up
                         status: "网络条件不匹配 · 已暂停刷新".into(),
                         online: false,
                     });
-                    ctx.request_repaint();
+                    wake.now();
                     paused = true;
                 }
                 router = None;
@@ -74,7 +74,7 @@ pub fn start(mut c: Config, ctx: egui::Context) -> (Sender<Command>, Receiver<Up
                     .into(),
                     online: false,
                 });
-                ctx.request_repaint();
+                wake.now();
                 next = Instant::now() + Duration::from_secs(60);
                 continue;
             }
@@ -83,7 +83,7 @@ pub fn start(mut c: Config, ctx: egui::Context) -> (Sender<Command>, Receiver<Up
                 status: "正在读取 CPE…".into(),
                 online: false,
             });
-            ctx.request_repaint();
+            wake.now();
             let result = (|| -> anyhow::Result<Snapshot> {
                 if router.is_none() {
                     let mut r = Router::new(&c)?;
@@ -115,7 +115,7 @@ pub fn start(mut c: Config, ctx: egui::Context) -> (Sender<Command>, Receiver<Up
                 }
             };
             let _ = out.send(update);
-            ctx.request_repaint();
+            wake.now();
             next = Instant::now() + Duration::from_secs(c.interval as u64 * 60);
         }
     });
