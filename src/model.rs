@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::{net::Ipv4Addr, path::PathBuf};
 use zeroize::{Zeroize, Zeroizing};
 
+pub const AUTOSTART_ARG: &str = "--autostart";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskbarSide {
@@ -39,6 +41,7 @@ pub struct Config {
     pub heading_weight: u16,
     pub ui_scale: f32,
     pub autostart: bool,
+    pub autostart_hidden: bool,
     pub topmost: bool,
     pub taskbar: TaskbarConfig,
     pub quota_gb: Option<f64>,
@@ -59,6 +62,7 @@ impl Default for Config {
             heading_weight: 600,
             ui_scale: 1.0,
             autostart: false,
+            autostart_hidden: false,
             topmost: false,
             taskbar: TaskbarConfig::default(),
             quota_gb: None,
@@ -185,7 +189,7 @@ pub fn autostart(enabled: bool) -> Result<()> {
     if enabled {
         key.set_value(
             "CPE-Monitor",
-            &format!("\"{}\"", std::env::current_exe()?.display()),
+            &format!("\"{}\" {AUTOSTART_ARG}", std::env::current_exe()?.display()),
         )?;
     } else {
         match key.delete_value("CPE-Monitor") {

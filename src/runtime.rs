@@ -140,6 +140,7 @@ struct Host {
     events: Vec<egui::Event>,
     capture: Option<String>,
     settings: bool,
+    start_hidden: bool,
     visible: bool,
     deadline: Option<Instant>,
     dirty: bool,
@@ -401,10 +402,12 @@ impl ApplicationHandler<Instant> for Host {
             },
             self.capture.take(),
             self.settings,
+            self.start_hidden,
         ));
+        self.visible = self.app.as_ref().unwrap().visible;
         self.window = Some(window);
         self.frame(el);
-        if self.error.is_none() {
+        if self.visible && !self.closing && self.error.is_none() {
             if let Some(window) = &self.window {
                 window.set_visible(true);
             }
@@ -502,6 +505,7 @@ pub fn run(
     builder: egui::ViewportBuilder,
     capture: Option<String>,
     settings: bool,
+    start_hidden: bool,
 ) -> anyhow::Result<()> {
     let el = EventLoop::<Instant>::with_user_event().build()?;
     let proxy = el.create_proxy();
@@ -524,6 +528,7 @@ pub fn run(
         events: Vec::new(),
         capture,
         settings,
+        start_hidden,
         visible: true,
         deadline: None,
         dirty: true,

@@ -951,6 +951,11 @@ impl App {
                     ui.add_space(4.);
                     ui.separator();
                     switch(ui, "开机自动启动", &mut self.draft.autostart, p);
+                    if self.draft.autostart {
+                        ui.indent("autostart-options", |ui| {
+                            ui.checkbox(&mut self.draft.autostart_hidden, "开机启动时隐藏到托盘");
+                        });
+                    }
                     switch(ui, "窗口始终置顶", &mut self.draft.topmost, p);
                     egui::CollapsingHeader::new("套餐设置").show(ui, |ui| {
                         let mut manual = self.draft.quota_gb.is_some();

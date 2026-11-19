@@ -66,6 +66,7 @@ impl App {
         cc: &crate::runtime::CreationContext<'_>,
         capture: Option<String>,
         settings: bool,
+        start_hidden: bool,
     ) -> Self {
         let mut config = model::load_config();
         if capture.is_some() {
@@ -82,7 +83,6 @@ impl App {
             }
         }
         let native = window::Controller::install(cc, window::load(), config.ui_scale, !settings);
-        apply_appearance(&cc.egui_ctx, &config);
         if settings || native.is_none() {
             cc.egui_ctx
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(if settings {
@@ -172,6 +172,12 @@ impl App {
             toggle = Some(hide);
             startup = Some(auto);
         }
+        let visible = !start_hidden || tray.is_none();
+        if visible {
+            apply_appearance(&cc.egui_ctx, &config);
+        } else if let Some(item) = &toggle {
+            item.set_text("显示窗口");
+        }
         let mut app = Self {
             draft: config.clone(),
             interval_text: config.interval.to_string(),
@@ -194,7 +200,7 @@ impl App {
             tray_rx,
             toggle,
             startup,
-            visible: true,
+            visible,
             adapter_list: Vec::new(),
             capture,
             capture_at: Instant::now(),
@@ -266,13 +272,17 @@ impl App {
                 .trim()
                 .parse()
                 .map_err(|_| anyhow::anyhow!("刷新间隔请输入 1–1440 的整数"))?;
-            // Moving the overlay should also work offline, without touching
-            // startup settings or restarting an authenticated router session.
-            if self.config.taskbar != self.draft.taskbar && self.password.is_empty() {
+            // Taskbar and startup preferences can be saved without CPE credentials.
+            if self.config != self.draft && self.password.is_empty() {
                 let mut updated = self.config.clone();
                 updated.taskbar = self.draft.taskbar.clone();
+                updated.autostart = self.draft.autostart;
+                updated.autostart_hidden = self.draft.autostart_hidden;
                 if updated == self.draft {
-                    model::save_config(&updated)?;
+                    let startup_changed = updated.autostart != self.config.autostart
+                        || (updated.autostart
+                            && updated.autostart_hidden != self.config.autostart_hidden);
+                    self.persist_settings(startup_changed)?;
                     return Ok(false);
                 }
             }
@@ -283,12 +293,7 @@ impl App {
             if self.draft.password.is_empty() {
                 anyhow::bail!("请填写后台登录密码");
             }
-            let previous = self.config.autostart;
-            model::autostart(self.draft.autostart)?;
-            if let Err(e) = model::save_config(&self.draft) {
-                let _ = model::autostart(previous);
-                return Err(e);
-            }
+            self.persist_settings(true)?;
             Ok(true)
         })();
         match result {
@@ -307,6 +312,16 @@ impl App {
             }
             Err(e) => self.error = format!("{e:#}"),
         }
+    }
+    fn persist_settings(&self, update_startup: bool) -> anyhow::Result<()> {
+        if update_startup {
+            model::autostart(self.draft.autostart)?;
+        }
+        let result = model::save_config(&self.draft);
+        if result.is_err() && update_startup {
+            let _ = model::autostart(self.config.autostart);
+        }
+        result
     }
 }
 
@@ -473,6 +488,11 @@ fn main() -> anyhow::Result<()> {
     };
     let c = model::load_config();
     let settings = args.iter().any(|s| s == "--settings");
+    let start_hidden = c.autostart
+        && c.autostart_hidden
+        && args.iter().any(|s| s == model::AUTOSTART_ARG)
+        && !settings
+        && capture.is_none();
     let img = icon();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("CPE 流量监控")
@@ -489,7 +509,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(p) = c.position {
         viewport = viewport.with_position(p);
     }
-    runtime::run(viewport, capture, settings)
+    runtime::run(viewport, capture, settings, start_hidden)
 }
 
 fn initialize_data() -> anyhow::Result<()> {

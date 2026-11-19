@@ -1,6 +1,6 @@
 # CPE 流量监控
 
-CPE 流量监控（crate 名 `cpe-monitor`，当前版本 `0.5.2`）是一个面向 Windows 的便携式桌面小组件。程序在局域网内访问 CPE 管理后台，自动完成挑战登录，读取设备侧流量统计，并在小窗口中显示剩余流量、本月已用、总额度、累计用量、更新时间和下次清零日期。剩余额度、进度条和重置倒计时也可以显示在任务栏。
+CPE 流量监控（crate 名 `cpe-monitor`，当前版本 `0.5.3`）是一个面向 Windows 的便携式桌面小组件。程序在局域网内访问 CPE 管理后台，自动完成挑战登录，读取设备侧流量统计，并在小窗口中显示剩余流量、本月已用、总额度、累计用量、更新时间和下次清零日期。剩余额度、进度条和重置倒计时也可以显示在任务栏。
 
 界面使用 Rust + egui 构建，画面由 CPU 软件光栅化后写入 Win32 GDI 的 DIB 缓冲区，再通过 `BitBlt` 呈现到窗口；不使用 WebView、OpenGL/Vulkan/Direct3D，也没有固定帧率渲染循环。程序无安装器，运行数据保存在 EXE 同目录的 `data/`。
 
@@ -36,7 +36,7 @@ CPE 流量监控（crate 名 `cpe-monitor`，当前版本 `0.5.2`）是一个面
 
 | 层面 | 实现 |
 | --- | --- |
-| 语言与版本 | Rust 2024 edition；crate 版本 `0.5.2` |
+| 语言与版本 | Rust 2024 edition；crate 版本 `0.5.3` |
 | 界面 | `egui 0.36.2`（仅 `default_fonts`）、`egui-winit 0.36.2`（剪贴板） |
 | 窗口与事件 | `winit 0.30`（`rwh_06`） |
 | 渲染 | `vendor/egui_software_backend`（CPU 软件光栅化）、`vendor/epaint 0.36.2` 本地补丁 |
@@ -213,6 +213,7 @@ cargo test --locked
 - 设置页为固定 `420×660` 大小，会尽量保持在当前显示器工作区内；按 `Esc`、点击关闭或“取消”都会返回小组件并恢复其位置。
 - 悬停时显示“设置”和“隐藏到托盘”按钮；若托盘创建失败，隐藏按钮会改为最小化窗口。
 - 托盘菜单包含“隐藏窗口/显示窗口”“立即刷新”“开机自启”和“退出”；双击托盘左键可显示并聚焦窗口。
+- 在设置里启用“开机自动启动”，再勾选“开机启动时隐藏到托盘”并保存。下次登录 Windows 时程序在托盘启动，继续刷新流量；已启用的任务栏组件也会显示。双击托盘图标可打开主界面。应用尚未运行时，手动启动会显示主界面。
 - 小组件不显示在任务栏或 Alt+Tab 列表中；设置页保留常规任务栏入口。
 
 ### 显示内容
@@ -239,6 +240,7 @@ cargo test --locked
 | 参数 | 作用 |
 | --- | --- |
 | `--settings` | 启动后直接打开设置页，而不是小组件。 |
+| `--autostart` | Windows 开机自启项使用。启用开机自启及隐藏选项时，从托盘启动。 |
 | `--probe` | 读取已保存配置，执行地址校验、登录和一次统计刷新；成功时写入 `cache.json`，并写入 `probe.json` 报告。 |
 | `--font-report` | 检查 `MiSans`、`Microsoft YaHei`、`Segoe UI` 的常规/半粗字面信息，写入 `font-report.json`。 |
 | `--capture=<路径>` | 截图模式：不启动刷新线程和托盘，等待指定延迟后保存窗口截图并退出。 |
@@ -268,6 +270,7 @@ cargo test --locked
   "heading_weight": 600,
   "ui_scale": 1.0,
   "autostart": false,
+  "autostart_hidden": false,
   "topmost": false,
   "taskbar": { "enabled": false, "side": "right", "offset": 0, "font": "" },
   "quota_gb": null,
@@ -288,7 +291,8 @@ cargo test --locked
 | `font_weight` | 整数 | `400` | 正文字重，范围 100–900。 |
 | `heading_weight` | 整数 | `600` | 标题和数字字重，范围 100–900。 |
 | `ui_scale` | 浮点数 | `1.0` | 范围 0.75–1.25，必须是有限数。仅在 `window.json` 不存在时作为小组件初始尺寸比例（`340×232 DIP × ui_scale`）；之后实际缩放由窗口宽度决定（限制在 0.65–2.0）。设置页不提供该项。 |
-| `autostart` | 布尔 | `false` | 开机自启。写入或删除 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `CPE-Monitor` 值，内容为带引号的当前 EXE 路径。 |
+| `autostart` | 布尔 | `false` | 开机自启。写入或删除 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `CPE-Monitor` 值，内容为带引号的当前 EXE 路径和 `--autostart` 参数。 |
+| `autostart_hidden` | 布尔 | `false` | 登录 Windows 自启时隐藏主窗口。 |
 | `topmost` | 布尔 | `false` | 窗口始终置顶。 |
 | `taskbar` | 对象 | 见上方模板 | `enabled` 控制显示，`side` 为 `right`（通知区旁）或 `left`，`offset` 是水平偏移 DIP，`font` 留空时跟随界面字体。旧配置自动使用默认值。 |
 | `quota_gb` | 数字或 `null` | `null` | 手动指定的每月额度（GB），覆盖设备值；必须有限且大于 0。设置页范围为 0.01–1,000,000。 |
@@ -297,7 +301,7 @@ cargo test --locked
 
 ### 保存时的校验与顺序
 
-单独更改任务栏选项时仅写入配置。保存其他设置时依次执行：
+只更改任务栏或开机启动选项时，可以直接保存，无需填写 CPE 登录信息。保存其他设置时依次执行：
 
 1. 解析刷新间隔文本，必须是 1–1440 的整数。
 2. 校验字重、`ui_scale`、地址、刷新间隔、IP、清零日和额度。

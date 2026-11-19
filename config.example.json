@@ -10,6 +10,7 @@
   "heading_weight": 600,
   "ui_scale": 1.0,
   "autostart": false,
+  "autostart_hidden": false,
   "topmost": false,
   "taskbar": { "enabled": false, "side": "right", "offset": 0, "font": "" },
   "quota_gb": null,
